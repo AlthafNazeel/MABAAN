@@ -98,11 +98,35 @@ def val_epoch(model, dl, criterion, device):
 
 
 def train_model(model, dataloaders, criterion, optimizer, scheduler, device,
-                num_epochs=30, patience=10, save_path='best_model.pth'):
-    """Full training loop with early stopping and DataParallel-aware saving."""
+                num_epochs=30, patience=10, save_path='best_model.pth',
+                resume_from=None):
+    """Full training loop with early stopping, DataParallel-aware saving, and checkpoint resume.
+
+    Args:
+        resume_from: Path to a checkpoint to resume from. If provided, loads the
+                     state dict into the model and runs one val epoch to establish
+                     the baseline best_val_loss before training continues.
+    """
+    import os
     tracker = MetricTracker()
     best_val_loss = float('inf')
     epochs_no_improve = 0
+
+    # Resume from checkpoint if provided
+    if resume_from and os.path.exists(resume_from):
+        print(f"  Resuming from checkpoint: {resume_from}")
+        state_dict = torch.load(resume_from, map_location=device)
+        # Strip 'module.' prefix if saved with DataParallel
+        new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+        if isinstance(model, torch.nn.DataParallel):
+            model.module.load_state_dict(new_state_dict)
+        else:
+            model.load_state_dict(new_state_dict)
+        # Run one val epoch to get baseline val_loss
+        vl, vd, vi, vc = val_epoch(model, dataloaders['val'], criterion, device)
+        best_val_loss = vl
+        print(f"  Checkpoint loaded. Baseline val_loss={vl:.4f}, Dice={vd:.4f}, IoU={vi:.4f}")
+
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
         tl, td, ti, tc = train_epoch(model, dataloaders['train'], criterion, optimizer, device)
